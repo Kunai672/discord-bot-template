@@ -1,0 +1,27 @@
+{
+  "name": "bot-template",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Discord bot template with OpenAI-compatible API support. Responds to @mentions and dedicated channel messages.",
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "discord.js": "^14.27.0",
+    "dotenv": "^18.0.9",
+    "openai": "^4.104.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
