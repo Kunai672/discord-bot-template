@@ -1,7 +1,8 @@
-import { Client, Events, GatewayIntentBits, Message, REST, Routes } from "discord.js";
+import { Client, Events, GatewayIntentBits, Message } from "discord.js";
 import { config } from "./config.js";
 import { createOpenAISession } from "./openai-session.js";
-import { commands, setStartTime } from "./commands/index.js";
+import { createConversationHistory } from "./conversation-history.js";
+import { createRateLimiter } from "./rate-limiter.js";
 
 const client = new Client({
   intents: [
@@ -12,6 +13,8 @@ const client = new Client({
 });
 
 const session = createOpenAISession(config);
+const history = createConversationHistory(config);
+const rateLimiter = createRateLimiter(config);
 
 function isOwner(userId: string): boolean {
   return config.ownerId !== undefined && userId === config.ownerId;
@@ -34,6 +37,17 @@ async function handleMessage(message: Message): Promise<void> {
   if (!isOwner(message.author.id)) return;
   if (!shouldRespondToMessage(message)) return;
 
+  // Rate limit check
+  if (!rateLimiter.check(message.author.id)) {
+    const resetMs = rateLimiter.getResetTime(message.author.id);
+    const resetSec = Math.ceil(resetMs / 1000);
+    await message.reply({
+      content: `⏱️ Rate limited. Try again in ${resetSec}s.`,
+      allowedMentions: { repliedUser: false },
+    });
+    return;
+  }
+
   // Strip mention from content
   let content = message.content;
   if (message.mentions.has(client.user?.id ?? "")) {
@@ -42,7 +56,16 @@ async function handleMessage(message: Message): Promise<void> {
 
   if (!content) return;
 
-  await message.channel.sendTyping();
+  // Send typing indicator (only for text-based channels)
+  if ("sendTyping" in message.channel) {
+    await message.channel.sendTyping();
+  }
+
+  // Add user message to history
+  history.add(message.author.id, message.channelId, { role: "user", content });
+
+  // Get conversation history
+  const conversationHistory = history.get(message.author.id, message.channelId);
 
   let buffer = "";
   let lastEdit = 0;
@@ -69,7 +92,7 @@ async function handleMessage(message: Message): Promise<void> {
   };
 
   session.chat({
-    messages: [{ role: "user", content }],
+    messages: conversationHistory,
     onChunk: (chunk) => {
       buffer += chunk;
       void flush();
@@ -89,6 +112,8 @@ async function handleMessage(message: Message): Promise<void> {
     },
     onComplete: async () => {
       if (hasError) return;
+      // Add assistant response to history
+      history.add(message.author.id, message.channelId, { role: "assistant", content: buffer });
       await flush(true);
     },
   });
@@ -96,53 +121,11 @@ async function handleMessage(message: Message): Promise<void> {
 
 client.on(Events.MessageCreate, handleMessage);
 
-client.on(Events.InteractionCreate, async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-
-  if (!isOwner(interaction.user.id)) {
-    await interaction.reply({ content: "❌ You are not authorized to use this command.", ephemeral: true });
-    return;
-  }
-
-  const command = commands.find((c) => c.data.name === interaction.commandName);
-  if (!command) return;
-
-  try {
-    await command.execute(interaction, session);
-  } catch (error) {
-    console.error(`Error executing command ${interaction.commandName}:`, error);
-    const message = `❌ Error: ${error instanceof Error ? error.message : String(error)}`;
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply(message).catch(() => {});
-    } else {
-      await interaction.reply({ content: message, ephemeral: true }).catch(() => {});
-    }
-  }
-});
-
-client.once(Events.ClientReady, async (readyClient) => {
+client.once(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
-
-  setStartTime(Date.now());
-
-  const rest = new REST({ version: "10" }).setToken(config.token);
-
-  const commandData = commands.map((c) => c.data.toJSON());
-
-  try {
-    if (config.guildId) {
-      await rest.put(Routes.applicationGuildCommands(readyClient.user.id, config.guildId), {
-        body: commandData,
-      });
-      console.log(`Registered ${commandData.length} guild command(s).`);
-    } else {
-      await rest.put(Routes.applicationCommands(readyClient.user.id), {
-        body: commandData,
-      });
-      console.log(`Registered ${commandData.length} global command(s).`);
-    }
-  } catch (error) {
-    console.error("Failed to register commands:", error);
+  console.log(`Rate limit: ${config.rateLimitRpm} requests/minute per user`);
+  if (config.channelId) {
+    console.log(`Dedicated channel: ${config.channelId}`);
   }
 });
 

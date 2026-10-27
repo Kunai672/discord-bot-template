@@ -22,6 +22,8 @@ export interface Config {
   openaiTemperature: number | undefined;
   /** System prompt (optional). */
   openaiSystemPrompt: string | undefined;
+  /** Rate limit: requests per minute per user (optional, default 30). */
+  rateLimitRpm: number;
 }
 
 function readEnv(name: string): string | undefined {
@@ -65,6 +67,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     );
   }
 
+  const rateLimitRpm = readEnvNumber("RATE_LIMIT_RPM") ?? 30;
+
   return {
     token,
     ownerId: readEnv("DISCORD_OWNER_ID"),
@@ -76,6 +80,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     openaiMaxTokens: readEnvNumber("OPENAI_MAX_TOKENS"),
     openaiTemperature: readEnvNumber("OPENAI_TEMPERATURE"),
     openaiSystemPrompt: readEnv("OPENAI_SYSTEM_PROMPT"),
+    rateLimitRpm,
   };
 }
 
